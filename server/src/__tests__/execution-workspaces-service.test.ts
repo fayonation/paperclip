@@ -437,6 +437,83 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     }
   });
 
+  it("inspects an unchanged candidate once instead of on every sweep", async () => {
+    const seeded = await seedTerminalWorkspace();
+    const runSpy = vi.spyOn(workspaceGitOperationScheduler, "run");
+    const countReadinessScans = () =>
+      runSpy.mock.calls.filter(
+        ([input]) =>
+          (input as { operation?: string }).operation === "execution_workspaces.close_readiness_status",
+      ).length;
+    try {
+      const first = await svc.sweepTerminalWorkspaces();
+      const scansAfterFirst = countReadinessScans();
+      const second = await svc.sweepTerminalWorkspaces();
+      expect(scansAfterFirst).toBeGreaterThanOrEqual(1);
+      expect(second.skippedRecentlyInspected).toBeGreaterThanOrEqual(1);
+      expect(countReadinessScans()).toBe(scansAfterFirst);
+      expect(first.archived).toBe(0);
+      expect(second.archived).toBe(0);
+      expect(seeded.executionWorkspaceId).toBeTruthy();
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
+  it("reads a working tree shared by several rows once per sweep", async () => {
+    const seeded = await seedTerminalWorkspace();
+    const secondIssueId = randomUUID();
+    const secondWorkspaceId = randomUUID();
+    // Production data looks like this: 54 of 59 candidate rows pointed at one
+    // directory, so a sweep paid one `git status` per row for the same tree.
+    await db.insert(executionWorkspaces).values({
+      id: secondWorkspaceId,
+      companyId: seeded.companyId,
+      projectId: seeded.projectId,
+      mode: "isolated_workspace",
+      strategyType: "git_worktree",
+      name: "shared-working-tree-row",
+      status: "active",
+      cwd: seeded.worktreePath,
+      providerRef: seeded.worktreePath,
+      providerType: "git_worktree",
+      repoUrl: "https://github.com/paperclipai/paperclip.git",
+      baseRef: "main",
+      branchName: "PAP-16015-delivery",
+    });
+    await db.insert(issues).values({
+      id: secondIssueId,
+      companyId: seeded.companyId,
+      projectId: seeded.projectId,
+      identifier: `${seeded.identifier}-shared`,
+      title: "Second row over the same working tree",
+      status: "done",
+      priority: "medium",
+      executionWorkspaceId: secondWorkspaceId,
+    });
+    await db
+      .update(executionWorkspaces)
+      .set({ sourceIssueId: secondIssueId })
+      .where(eq(executionWorkspaces.id, secondWorkspaceId));
+
+    const runSpy = vi.spyOn(workspaceGitOperationScheduler, "run");
+    const scansForPath = () =>
+      runSpy.mock.calls.filter(([input]) => {
+        const call = input as { operation?: string; workspacePath?: string };
+        return (
+          call.operation === "execution_workspaces.close_readiness_status"
+          && typeof call.workspacePath === "string"
+          && path.resolve(call.workspacePath) === path.resolve(seeded.worktreePath)
+        );
+      }).length;
+    try {
+      await svc.sweepTerminalWorkspaces();
+      expect(scansForPath()).toBe(1);
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
   it("serves a repeated close-readiness scan from the scheduler cache", async () => {
     const seeded = await seedTerminalWorkspace();
     const runSpy = vi.spyOn(workspaceGitOperationScheduler, "run");
@@ -458,6 +535,32 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
       );
       expect(responses[responses.length - 2]?.cacheHit).toBe(false);
       expect(responses[responses.length - 1]?.cacheHit).toBe(true);
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
+  it("reads live Git state for the close decision inside the cache window", async () => {
+    const seeded = await seedTerminalWorkspace();
+    const runSpy = vi.spyOn(workspaceGitOperationScheduler, "run");
+    try {
+      // The board display read populates the bounded cache.
+      await svc.getCloseReadiness(seeded.executionWorkspaceId);
+      // The archive decision must not reuse it: that read decides whether the
+      // worktree is destroyed.
+      await svc.getCloseReadiness(seeded.executionWorkspaceId, { freshGitStatus: true });
+      const readinessCallIndexes = runSpy.mock.calls
+        .map((call, index) => ({
+          index,
+          operation: (call[0] as { operation?: string }).operation,
+        }))
+        .filter((entry) => entry.operation === "execution_workspaces.close_readiness_status")
+        .map((entry) => entry.index);
+      expect(readinessCallIndexes.length).toBeGreaterThanOrEqual(2);
+      const decisionScan = await (runSpy.mock.results[
+        readinessCallIndexes[readinessCallIndexes.length - 1]!
+      ]!.value as Promise<{ cacheHit?: boolean }>);
+      expect(decisionScan.cacheHit).toBe(false);
     } finally {
       runSpy.mockRestore();
     }

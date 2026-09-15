@@ -1369,6 +1369,34 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
   // removes the upper bound and makes the scan chase newer churn again. This
   // flag lets only one sweep run at a time, so one sweep owns the shared state.
   let terminalSweepInProgress = false;
+  // The reaper reads live Git state before it archives, so the bounded
+  // close-readiness cache does not apply to it. A candidate that is terminal but
+  // not eligible (unmerged delivery, dirty tree) keeps the same row, so a sweep
+  // re-inspected the same workspace every tick. Remember the last inspection per
+  // workspace and skip an unchanged row inside this window. The archive path
+  // re-verifies the Git state under the lifecycle lock, so a delayed inspection
+  // can only delay an archive, never corrupt one.
+  const reaperGitInspectionCooldownMs = 5 * 60 * 1000;
+  const reaperGitInspections = new Map<string, { updatedAtMs: number; inspectedAtMs: number }>();
+  const recordReaperGitInspection = (workspace: ExecutionWorkspaceRow, at: number) => {
+    const updatedAtMs = workspace.updatedAt instanceof Date
+      ? workspace.updatedAt.getTime()
+      : new Date(workspace.updatedAt as unknown as string).getTime();
+    if (reaperGitInspections.size >= 512 && !reaperGitInspections.has(workspace.id)) {
+      const oldest = reaperGitInspections.keys().next().value;
+      if (oldest !== undefined) reaperGitInspections.delete(oldest);
+    }
+    reaperGitInspections.set(workspace.id, { updatedAtMs, inspectedAtMs: at });
+  };
+  const shouldSkipReaperGitInspection = (workspace: ExecutionWorkspaceRow, at: number) => {
+    const previous = reaperGitInspections.get(workspace.id);
+    if (!previous) return false;
+    const updatedAtMs = workspace.updatedAt instanceof Date
+      ? workspace.updatedAt.getTime()
+      : new Date(workspace.updatedAt as unknown as string).getTime();
+    if (previous.updatedAtMs !== updatedAtMs) return false;
+    return at - previous.inspectedAtMs < reaperGitInspectionCooldownMs;
+  };
 
   async function listWorkspaceIssueTree(workspace: Pick<ExecutionWorkspaceRow, "companyId" | "sourceIssueId">) {
     if (!workspace.sourceIssueId) return [];
@@ -2325,7 +2353,16 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       );
     },
 
-    getCloseReadiness: async (id: string): Promise<ExecutionWorkspaceCloseReadiness | null> => {
+    getCloseReadiness: async (
+      id: string,
+      /**
+       * Historical note: the archive route decides whether it may destroy the
+       * worktree from this read, so it asks for live Git state (`cacheTtlMs: 0`).
+       * The board display read keeps the bounded cache, because a stale banner is
+       * cosmetic while a stale archive decision is not.
+       */
+      options: { freshGitStatus?: boolean } = {},
+    ): Promise<ExecutionWorkspaceCloseReadiness | null> => {
       const workspace = await db
         .select()
         .from(executionWorkspaces)
@@ -2396,7 +2433,10 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         git,
         warnings: gitWarnings,
         statusInspectionSucceeded,
-      } = await inspectGitCloseReadiness(executionWorkspace, closeReadinessReadOptions);
+      } = await inspectGitCloseReadiness(
+        executionWorkspace,
+        options.freshGitStatus ? { cacheTtlMs: 0 } : closeReadinessReadOptions,
+      );
       const { deliveryState } = await assessDelivery(workspace, git);
       const warnings = [...gitWarnings];
       const blockingReasons: string[] = [];
@@ -2603,6 +2643,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           skippedActiveRun: 0,
           skippedNonTerminalTree: 0,
           skippedUndelivered: 0,
+          skippedRecentlyInspected: 0,
           skippedRace: 0,
           skippedReopened: 0,
           skippedCooldown: 0,
@@ -2667,12 +2708,22 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         skippedActiveRun: 0,
         skippedNonTerminalTree: 0,
         skippedUndelivered: 0,
+        skippedRecentlyInspected: 0,
         skippedRace: 0,
         skippedReopened: 0,
         skippedCooldown: 0,
         clearedStaleReopenPending: 0,
       };
 
+      // 54 of the 59 candidate rows resolve to the same directory, so inspecting
+      // each row cost one full `git status --untracked-files=all` per row even
+      // though every one of them describes the same working tree. Read each
+      // directory once per sweep and share that snapshot across the rows that
+      // point at it.
+      const perSweepGitReadiness = new Map<
+        string,
+        Promise<{ git: ExecutionWorkspaceCloseGitReadiness | null; warnings: string[]; statusInspectionSucceeded: boolean }>
+      >();
       for (const workspace of candidates) {
         const executionWorkspace = toExecutionWorkspace(workspace);
         // Read the issue tree first. It is a database-only read, while the Git
@@ -2702,7 +2753,24 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           result.skippedNonTerminalTree += 1;
           continue;
         }
-        const { git, statusInspectionSucceeded } = await inspectGitCloseReadiness(executionWorkspace);
+        const sweepNowMs = now().getTime();
+        if (shouldSkipReaperGitInspection(workspace, sweepNowMs)) {
+          result.skippedRecentlyInspected += 1;
+          continue;
+        }
+        recordReaperGitInspection(workspace, sweepNowMs);
+        // One git read per directory per sweep: the rows that share a working
+        // tree share the snapshot it produced.
+        const gitReadinessKey =
+          readNullableString(workspace.providerRef)
+          ?? readNullableString(workspace.cwd)
+          ?? `workspace:${workspace.id}`;
+        let gitReadiness = perSweepGitReadiness.get(gitReadinessKey);
+        if (!gitReadiness) {
+          gitReadiness = inspectGitCloseReadiness(executionWorkspace);
+          perSweepGitReadiness.set(gitReadinessKey, gitReadiness);
+        }
+        const { git, statusInspectionSucceeded } = await gitReadiness;
         if (!statusInspectionSucceeded) {
           result.skippedUndelivered += 1;
           continue;
