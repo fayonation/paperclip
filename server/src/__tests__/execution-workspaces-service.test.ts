@@ -296,6 +296,7 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     mergedPr?: boolean;
     activeRun?: boolean;
     childStatus?: "done" | "todo";
+    sourceStatus?: "done" | "in_progress" | "todo";
   } = {}) {
     const companyId = randomUUID();
     const projectId = randomUUID();
@@ -346,7 +347,7 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
       projectId,
       identifier,
       title: "Delivered source issue",
-      status: "done",
+      status: options.sourceStatus ?? "done",
       priority: "medium",
       executionWorkspaceId,
     });
@@ -416,6 +417,51 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     }
     return { companyId, projectId, executionWorkspaceId, sourceIssueId, identifier, repoRoot, worktreePath, headSha };
   }
+
+  it("reads the issue tree before it inspects git for a workspace that is not terminal", async () => {
+    const seeded = await seedTerminalWorkspace({ sourceStatus: "in_progress" });
+    const runSpy = vi.spyOn(workspaceGitOperationScheduler, "run");
+    try {
+      const sweep = await svc.sweepTerminalWorkspaces();
+      const readinessScans = runSpy.mock.calls.filter(
+        ([input]) =>
+          (input as { operation?: string }).operation === "execution_workspaces.close_readiness_status",
+      );
+      expect(readinessScans).toHaveLength(0);
+      expect(sweep.checked).toBeGreaterThanOrEqual(1);
+      expect(sweep.skippedNonTerminalTree).toBeGreaterThanOrEqual(1);
+      expect(sweep.archived).toBe(0);
+      expect(seeded.executionWorkspaceId).toBeTruthy();
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
+  it("serves a repeated close-readiness scan from the scheduler cache", async () => {
+    const seeded = await seedTerminalWorkspace();
+    const runSpy = vi.spyOn(workspaceGitOperationScheduler, "run");
+    try {
+      await svc.getCloseReadiness(seeded.executionWorkspaceId);
+      await svc.getCloseReadiness(seeded.executionWorkspaceId);
+      const readinessCallIndexes = runSpy.mock.calls
+        .map((call, index) => ({
+          index,
+          operation: (call[0] as { operation?: string }).operation,
+        }))
+        .filter((entry) => entry.operation === "execution_workspaces.close_readiness_status")
+        .map((entry) => entry.index);
+      expect(readinessCallIndexes.length).toBeGreaterThanOrEqual(2);
+      const responses = await Promise.all(
+        readinessCallIndexes.map(
+          (index) => runSpy.mock.results[index]!.value as Promise<{ cacheHit?: boolean }>,
+        ),
+      );
+      expect(responses[responses.length - 2]?.cacheHit).toBe(false);
+      expect(responses[responses.length - 1]?.cacheHit).toBe(true);
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
 
   it("reports a squash cross-branch delivery as merged_via_pr and suppresses the ancestry warning", async () => {
     const repoRoot = await createTempRepo();
