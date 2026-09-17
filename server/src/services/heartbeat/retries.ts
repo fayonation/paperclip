@@ -282,6 +282,18 @@ function isSpawnLikeFailureMessage(value: unknown) {
   return /failed to start command|spawn\b|\bENOENT\b/i.test(value);
 }
 
+function isProviderAdmissionFailureRun(
+  run: Pick<typeof heartbeatRuns.$inferSelect, "error" | "resultJson">,
+) {
+  const resultJson = parseObject(run.resultJson);
+  const haystack = `${run.error ?? ""}\n${readNonEmptyString(resultJson.stdout) ?? ""}\n${readNonEmptyString(resultJson.stderr) ?? ""}\n${readNonEmptyString(resultJson.errorMessage) ?? ""}`;
+  return (
+    /failed to read request body/i.test(haystack) ||
+    /too many images were provided/i.test(haystack) ||
+    /\bspawn\s+E2BIG\b/i.test(haystack)
+  );
+}
+
 // A sandbox provider plugin's worker can be briefly down during its own
 // restart window (e.g. a rolling deploy of the plugin worker process). Lease
 // acquisition fails immediately in that window, but the condition is
@@ -657,6 +669,9 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
             }
           : {}),
         ...(codexTransientFallbackMode ? { codexTransientFallbackMode } : {}),
+        ...(isProviderAdmissionFailureRun(run)
+          ? { forceFreshSession: true, providerSessionRotated: true }
+          : {}),
       },
       "normal_model",
     );
@@ -1014,6 +1029,9 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
                   : {}),
                 ...(codexTransientFallbackMode
                   ? { codexTransientFallbackMode }
+                  : {}),
+                ...(isProviderAdmissionFailureRun(run)
+                  ? { forceFreshSession: true, providerSessionRotated: true }
                   : {}),
               },
               "normal_model",
