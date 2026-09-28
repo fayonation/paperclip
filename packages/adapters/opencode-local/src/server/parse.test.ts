@@ -112,6 +112,30 @@ describe("parseOpenCodeJsonl", () => {
     expect(
       isOpenCodeProviderAdmissionError("ProviderError: unknown session id", ""),
     ).toBe(false);
+    // Assistant text and tool output that merely quote the phrase are not
+    // admission failures: a resumable session must not be discarded.
+    expect(
+      isOpenCodeProviderAdmissionError(
+        JSON.stringify({
+          type: "text",
+          sessionID: "session_123",
+          part: { text: "The provider said: failed to read request body" },
+        }),
+        "",
+      ),
+    ).toBe(false);
+    expect(
+      isOpenCodeProviderAdmissionError(
+        JSON.stringify({
+          type: "tool_use",
+          sessionID: "session_123",
+          part: {
+            state: { status: "error", error: "Too many images were provided" },
+          },
+        }),
+        "",
+      ),
+    ).toBe(false);
   });
 });
 

@@ -11561,6 +11561,16 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             sql<string>`${chatPublications.payload}->>'interactionId'`,
             interaction.id,
           ),
+          // A `pending` (or `retry`/`failed`) row is queued, not delivered: the
+          // card never reached the provider. Treating it as proof of delivery
+          // would let an unrelated `1`/`2` sent while the card is still queued
+          // resolve a gate the user has not seen. Only a provider-visible
+          // publication counts as the delivery binding.
+          inArray(chatPublications.state, [
+            "streaming",
+            "delivery_unknown",
+            "published",
+          ]),
         ),
       )
       .limit(1);
@@ -31209,7 +31219,11 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     );
     // `explicit:` keeps this send on the operator-send lifecycle: it is never
     // suppressed by run-progress supersession or conversation completion, and
-    // it is not auto-published from a task comment.
+    // it is not auto-published from a task comment. The key is intentionally
+    // destination-agnostic (a retry may address the same thread by resource or
+    // conversation); the destination check on the persisted row below rejects a
+    // reused key aimed at a different conversation instead of silently
+    // returning the earlier send.
     const idempotencyKey = `explicit:agent:${endpointId}:${actor.agentId}:${input.idempotencyKey}`;
     const publicationCreatedAt = new Date();
 
@@ -31356,6 +31370,17 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             ),
           )
           .then((rows) => rows[0] ?? null));
+      // A reused key whose earlier publication belongs to a different
+      // conversation is a mismatched retry, not a duplicate of this send.
+      // Reject it rather than returning that earlier publication (which would
+      // silently drop the new message) and rather than inserting a second row
+      // under one idempotency key.
+      if (persisted && persisted.conversationId !== conversation.id) {
+        throw conflict(
+          "This idempotency key was already used for a different chat destination",
+          { code: "chat_send_idempotency_destination_mismatch" },
+        );
+      }
       if (persisted) {
         await logActivity(tx as unknown as Db, {
           companyId: endpoint.companyId,
