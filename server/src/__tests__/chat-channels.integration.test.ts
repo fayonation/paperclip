@@ -72373,6 +72373,69 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       await f.service.shutdown();
     });
 
+    it("rejects a reused idempotency key aimed at a different destination", async () => {
+      const f = await agentSendFixture();
+      const actor = {
+        agentId: f.fixture.assignedAgentId,
+        runId: f.runId,
+        companyId: f.fixture.companyId,
+      };
+      const key = "agent-channel-reuse-0001";
+      const first = await f.service.publishAgentMessage(
+        f.endpoint.id,
+        { body: "First destination", idempotencyKey: key, resourceId: f.channel.id },
+        actor,
+      );
+      // Retrying the same send by addressing the resulting conversation is
+      // still idempotent: it returns the original publication, not a new one.
+      const retrySameDestination = await f.service.publishAgentMessage(
+        f.endpoint.id,
+        {
+          body: "First destination",
+          idempotencyKey: key,
+          conversationId: first.conversationId,
+        },
+        actor,
+      );
+      expect(retrySameDestination.id).toBe(first.id);
+
+      const [otherConversation] = await db
+        .insert(chatConversations)
+        .values({
+          companyId: f.fixture.companyId,
+          endpointId: f.endpoint.id,
+          issueId: f.issue.id,
+          externalConversationId: "agent-reuse-other",
+          externalThreadId: "discord:1457808928258658549:999999999999999999",
+          externalLabel: "agent-reuse-other",
+          isDirectMessage: false,
+          state: "active",
+          lastActivityAt: new Date(),
+        })
+        .returning();
+      // A different destination under the same key is rejected rather than
+      // silently returning the earlier publication.
+      await expect(
+        f.service.publishAgentMessage(
+          f.endpoint.id,
+          {
+            body: "Second destination",
+            idempotencyKey: key,
+            conversationId: otherConversation!.id,
+          },
+          actor,
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+      const posts = f.runtime.endpoints.get(f.endpoint.id)?.posts ?? [];
+      expect(
+        posts.filter((post) => post.text.includes("First destination")),
+      ).toHaveLength(1);
+      expect(
+        posts.filter((post) => post.text.includes("Second destination")),
+      ).toHaveLength(0);
+      await f.service.shutdown();
+    });
+
     it("rejects a non-assigned agent and a disabled destination", async () => {
       const f = await agentSendFixture();
       await expect(
