@@ -63,6 +63,13 @@ Fields:
 | `skip_if_active` | Incoming run is immediately finalised as `skipped` and linked to the active run — no new issue is created |
 | `always_enqueue` | Always create a new run regardless of active runs |
 
+**Coalescing requires a live execution.** `coalesce_if_active` merges an incoming
+run only into an **open** execution issue that still has a **live heartbeat run**
+(`findLiveExecutionIssue`, `server/src/services/routines.ts:1502`). Once the first
+execution issue is closed — or its heartbeat run has ended — the next fire has
+nothing live to merge into and creates a new issue. Finish/close the first
+execution before relying on the next fire to coalesce.
+
 **Catch-up policies:**
 
 | Value | Behaviour |
@@ -181,6 +188,19 @@ POST /api/routines/{routineId}/run
 Fires a run immediately, bypassing the schedule. Concurrency policy still applies.
 
 `triggerId` is optional. When supplied, the server validates the trigger belongs to this routine (`403`) and is enabled (`409`), then records the run against that trigger and updates its `lastFiredAt`. Omit it for a generic manual run with no trigger attribution.
+
+**Operator rule: pass the pending schedule trigger's `triggerId`.** When a routine
+also has a `schedule` trigger and you run it manually, pass the pending schedule
+trigger's `triggerId`. The server then recomputes `trigger.next_run_at` from `now`
+and **suppresses the stale scheduled fire**, so you do not get a second run for
+the same occurrence. Without `triggerId`, the scheduled fire remains pending: if
+the manual run's payload changed (which changes the dispatch fingerprint), that
+scheduled fire is treated as a distinct execution and **still creates a separate
+execution issue, even under `coalesce_if_active`**.
+
+If a duplicate run issue appears from a timezone/schedule-transition boundary,
+consolidate and close it against the original execution. Never let it raise a
+second monthly plan card — there is exactly one plan card per month.
 
 ## Fire Public Trigger
 
