@@ -3212,10 +3212,20 @@ export function routineService(
         const automaticEligibility = await getAutomaticRoutineDispatchEligibility(row.routine, worktreeActivation);
         const worktreeSuppressed = !automaticEligibility.eligible;
 
+        // A stored occurrence can go stale when the zone rules change between the time it was
+        // computed and the time it fires (for example a timezone offset change). Under the new
+        // rules the stored UTC instant may no longer be a valid cron occurrence, and re-claiming
+        // from "now" can point back at the same local occurrence, producing a duplicate dispatch.
+        const staleOccurrence = !matchesCronMinute(
+          row.trigger.cronExpression,
+          row.trigger.timezone,
+          row.trigger.nextRunAt,
+        );
+
         let runCount = 1;
         let claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
 
-        if (!projectPaused && !worktreeSuppressed && row.routine.catchUpPolicy === "enqueue_missed_with_cap") {
+        if (!staleOccurrence && !projectPaused && !worktreeSuppressed && row.routine.catchUpPolicy === "enqueue_missed_with_cap") {
           if (isSubHourlyCronExpression(row.trigger.cronExpression, row.trigger.timezone, now)) {
             claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
           } else {
@@ -3246,6 +3256,13 @@ export function routineService(
           .returning({ id: routineTriggers.id })
           .then((rows) => rows[0] ?? null);
         if (!claimed) continue;
+
+        if (staleOccurrence) {
+          // The stored occurrence was computed under different zone rules. We already re-aligned
+          // nextRunAt to the next valid tick above; skip dispatching so the same local occurrence
+          // is not fired twice.
+          continue;
+        }
 
         if (projectPaused || worktreeSuppressed) {
           await recordSuppressedAutomaticRun({
