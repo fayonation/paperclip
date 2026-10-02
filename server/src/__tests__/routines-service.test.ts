@@ -2772,6 +2772,56 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     },
   );
 
+  it("fires a stale occurrence once when the scheduler tick arrives after its corrected instant", async () => {
+    const { routine, svc } = await seedFixture();
+    const { trigger } = await svc.createTrigger(routine.id, {
+      kind: "schedule",
+      cronExpression: "0 8 * * *",
+      timezone: "UTC",
+    }, {});
+
+    const staleOccurrence = new Date("2026-10-01T07:30:00.000Z");
+    await db.update(routineTriggers).set({ nextRunAt: staleOccurrence }).where(eq(routineTriggers.id, trigger.id));
+
+    // The scheduler runs late, after the corrected 08:00Z instant. The occurrence must
+    // still fire exactly once instead of being dropped by the re-alignment.
+    expect(await svc.tickScheduledTriggers(new Date("2026-10-01T08:30:00.000Z"))).toEqual({ triggered: 1 });
+
+    const realigned = await db.select().from(routineTriggers).where(eq(routineTriggers.id, trigger.id)).then((rows) => rows[0]);
+    expect(realigned?.nextRunAt).toEqual(new Date("2026-10-02T08:00:00.000Z"));
+
+    expect(await svc.tickScheduledTriggers(new Date("2026-10-01T08:30:00.000Z"))).toEqual({ triggered: 0 });
+
+    const runs = await db.select().from(routineRuns).where(eq(routineRuns.routineId, routine.id));
+    expect(runs).toHaveLength(1);
+  });
+
+  it("fires the offset-transition occurrence once using widely available tzdata", async () => {
+    const { routine, svc } = await seedFixture();
+    const { trigger } = await svc.createTrigger(routine.id, {
+      kind: "schedule",
+      cronExpression: "0 8 * * *",
+      timezone: "America/New_York",
+    }, {});
+
+    // US DST ends on 2026-11-01. Before the change local 08:00 was 12:00Z (EDT); after
+    // it local 08:00 is 13:00Z (EST). The stored 12:00Z occurrence is stale after the
+    // transition. It must re-align to 13:00Z and still fire exactly once.
+    const staleOccurrence = new Date("2026-11-01T12:00:00.000Z");
+    await db.update(routineTriggers).set({ nextRunAt: staleOccurrence }).where(eq(routineTriggers.id, trigger.id));
+
+    expect(await svc.tickScheduledTriggers(staleOccurrence)).toEqual({ triggered: 0 });
+
+    const realigned = await db.select().from(routineTriggers).where(eq(routineTriggers.id, trigger.id)).then((rows) => rows[0]);
+    expect(realigned?.nextRunAt).toEqual(new Date("2026-11-01T13:00:00.000Z"));
+
+    expect(await svc.tickScheduledTriggers(new Date("2026-11-01T13:00:00.000Z"))).toEqual({ triggered: 1 });
+    expect(await svc.tickScheduledTriggers(new Date("2026-11-01T13:00:00.000Z"))).toEqual({ triggered: 0 });
+
+    const runs = await db.select().from(routineRuns).where(eq(routineRuns.routineId, routine.id));
+    expect(runs).toHaveLength(1);
+  });
+
   it("coalesces sub-hourly schedules restricted to weekdays", async () => {
     const { routine, svc } = await seedFixture();
     await db.update(routines).set({

@@ -3225,7 +3225,27 @@ export function routineService(
         let runCount = 1;
         let claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
 
-        if (!staleOccurrence && !projectPaused && !worktreeSuppressed && row.routine.catchUpPolicy === "enqueue_missed_with_cap") {
+        if (staleOccurrence) {
+          // Recover the instant the stale occurrence now maps to: the first valid cron tick at or
+          // after the stored instant. If the scheduler tick is late and that instant is already
+          // due, fire it once and advance past now. Otherwise claim it without firing; the next
+          // tick at that instant fires it. Catch-up is intentionally not replayed for a stale
+          // occurrence: walking past the corrected instant would fire the same occurrence again
+          // on the next tick.
+          const correctedNextRunAt = nextCronTickInTimeZone(
+            row.trigger.cronExpression,
+            row.trigger.timezone,
+            new Date(row.trigger.nextRunAt.getTime() - 60_000),
+          );
+          if (!correctedNextRunAt) continue;
+          if (correctedNextRunAt.getTime() <= now.getTime()) {
+            runCount = 1;
+            claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now) ?? correctedNextRunAt;
+          } else {
+            runCount = 0;
+            claimedNextRunAt = correctedNextRunAt;
+          }
+        } else if (!projectPaused && !worktreeSuppressed && row.routine.catchUpPolicy === "enqueue_missed_with_cap") {
           if (isSubHourlyCronExpression(row.trigger.cronExpression, row.trigger.timezone, now)) {
             claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
           } else {
@@ -3257,10 +3277,8 @@ export function routineService(
           .then((rows) => rows[0] ?? null);
         if (!claimed) continue;
 
-        if (staleOccurrence) {
-          // The stored occurrence was computed under different zone rules. We already re-aligned
-          // nextRunAt to the next valid tick above; skip dispatching so the same local occurrence
-          // is not fired twice.
+        if (runCount === 0) {
+          // A stale occurrence that is not due yet was re-aligned above; nothing to dispatch.
           continue;
         }
 
