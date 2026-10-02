@@ -2822,6 +2822,26 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     expect(runs).toHaveLength(1);
   });
 
+  it("replays missed occurrences from the corrected instant for a stale catch-up trigger", async () => {
+    const { routine, svc } = await seedFixture();
+    await db.update(routines).set({ catchUpPolicy: "enqueue_missed_with_cap" }).where(eq(routines.id, routine.id));
+    const { trigger } = await svc.createTrigger(routine.id, {
+      kind: "schedule",
+      cronExpression: "0 * * * *",
+      timezone: "UTC",
+    }, {});
+
+    // The stale stored instant realigns to 07:00Z, then the catch-up walk replays the
+    // 07:00Z, 08:00Z and 09:00Z occurrences and claims 10:00Z.
+    const staleOccurrence = new Date("2026-10-01T06:30:00.000Z");
+    await db.update(routineTriggers).set({ nextRunAt: staleOccurrence }).where(eq(routineTriggers.id, trigger.id));
+
+    expect(await svc.tickScheduledTriggers(new Date("2026-10-01T09:05:00.000Z"))).toEqual({ triggered: 3 });
+
+    const realigned = await db.select().from(routineTriggers).where(eq(routineTriggers.id, trigger.id)).then((rows) => rows[0]);
+    expect(realigned?.nextRunAt).toEqual(new Date("2026-10-01T10:00:00.000Z"));
+  });
+
   it("coalesces sub-hourly schedules restricted to weekdays", async () => {
     const { routine, svc } = await seedFixture();
     await db.update(routines).set({

@@ -3222,41 +3222,49 @@ export function routineService(
           row.trigger.nextRunAt,
         );
 
-        let runCount = 1;
-        let claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
-
-        if (staleOccurrence) {
-          // Recover the instant the stale occurrence now maps to: the first valid cron tick at or
-          // after the stored instant. If the scheduler tick is late and that instant is already
-          // due, fire it once and advance past now. Otherwise claim it without firing; the next
-          // tick at that instant fires it. Catch-up is intentionally not replayed for a stale
-          // occurrence: walking past the corrected instant would fire the same occurrence again
-          // on the next tick.
-          const correctedNextRunAt = nextCronTickInTimeZone(
+        // The occurrence this tick processes. For a live trigger it is the stored instant; for a
+        // stale one it is the first valid cron tick at or after the stored instant, which is the
+        // instant that occurrence now maps to after the zone-rules change.
+        const dueCursor = staleOccurrence
+          ? nextCronTickInTimeZone(
             row.trigger.cronExpression,
             row.trigger.timezone,
             new Date(row.trigger.nextRunAt.getTime() - 60_000),
-          );
-          if (!correctedNextRunAt) continue;
-          if (correctedNextRunAt.getTime() <= now.getTime()) {
-            runCount = 1;
-            claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now) ?? correctedNextRunAt;
-          } else {
-            runCount = 0;
-            claimedNextRunAt = correctedNextRunAt;
-          }
-        } else if (!projectPaused && !worktreeSuppressed && row.routine.catchUpPolicy === "enqueue_missed_with_cap") {
+          )
+          : row.trigger.nextRunAt;
+        if (!dueCursor) continue;
+
+        let runCount = 1;
+        let claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
+
+        if (!projectPaused && !worktreeSuppressed && row.routine.catchUpPolicy === "enqueue_missed_with_cap") {
           if (isSubHourlyCronExpression(row.trigger.cronExpression, row.trigger.timezone, now)) {
             claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
           } else {
-            let cursor: Date | null = row.trigger.nextRunAt;
+            // Replay every due occurrence from the cursor, including the corrected instant of a
+            // stale occurrence. Starting at the corrected instant (not the stale one) keeps the
+            // same occurrence from firing again on the next tick.
+            let cursor: Date | null = dueCursor;
             runCount = 0;
+            claimedNextRunAt = dueCursor;
             while (cursor && cursor <= now && runCount < MAX_CATCH_UP_RUNS) {
               runCount += 1;
               claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, cursor);
               cursor = claimedNextRunAt;
             }
           }
+        } else if (!staleOccurrence) {
+          // Live occurrence without backfill: fire once and advance past now.
+          runCount = 1;
+          claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
+        } else if (dueCursor.getTime() <= now.getTime()) {
+          // Stale occurrence already due without backfill: fire once and advance past now.
+          runCount = 1;
+          claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
+        } else {
+          // Stale occurrence not due yet: claim the corrected instant without firing.
+          runCount = 0;
+          claimedNextRunAt = dueCursor;
         }
 
         const claimed = await db
