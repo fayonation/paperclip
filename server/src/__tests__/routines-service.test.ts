@@ -2842,6 +2842,28 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     expect(realigned?.nextRunAt).toEqual(new Date("2026-10-01T10:00:00.000Z"));
   });
 
+  it("waits for the corrected instant of a stale sub-hourly catch-up occurrence", async () => {
+    const { routine, svc } = await seedFixture();
+    await db.update(routines).set({ catchUpPolicy: "enqueue_missed_with_cap" }).where(eq(routines.id, routine.id));
+    const { trigger } = await svc.createTrigger(routine.id, {
+      kind: "schedule",
+      cronExpression: "*/10 * * * *",
+      timezone: "UTC",
+    }, {});
+
+    // 09:55Z is not a `*/10` tick, so it is stale. The corrected instant is 10:00Z, and the
+    // tick at 09:56Z must wait for it instead of firing early and double-firing at 10:00Z.
+    const staleOccurrence = new Date("2026-10-01T09:55:00.000Z");
+    await db.update(routineTriggers).set({ nextRunAt: staleOccurrence }).where(eq(routineTriggers.id, trigger.id));
+
+    expect(await svc.tickScheduledTriggers(new Date("2026-10-01T09:56:00.000Z"))).toEqual({ triggered: 0 });
+
+    const realigned = await db.select().from(routineTriggers).where(eq(routineTriggers.id, trigger.id)).then((rows) => rows[0]);
+    expect(realigned?.nextRunAt).toEqual(new Date("2026-10-01T10:00:00.000Z"));
+
+    expect(await svc.tickScheduledTriggers(new Date("2026-10-01T10:00:00.000Z"))).toEqual({ triggered: 1 });
+  });
+
   it("coalesces sub-hourly schedules restricted to weekdays", async () => {
     const { routine, svc } = await seedFixture();
     await db.update(routines).set({

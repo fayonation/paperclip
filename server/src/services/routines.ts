@@ -3239,7 +3239,14 @@ export function routineService(
 
         if (!projectPaused && !worktreeSuppressed && row.routine.catchUpPolicy === "enqueue_missed_with_cap") {
           if (isSubHourlyCronExpression(row.trigger.cronExpression, row.trigger.timezone, now)) {
-            claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
+            if (dueCursor.getTime() <= now.getTime()) {
+              runCount = 1;
+              claimedNextRunAt = nextCronTickInTimeZone(row.trigger.cronExpression, row.trigger.timezone, now);
+            } else {
+              // Stale sub-hourly occurrence not due yet: wait for its corrected instant.
+              runCount = 0;
+              claimedNextRunAt = dueCursor;
+            }
           } else {
             // Replay every due occurrence from the cursor, including the corrected instant of a
             // stale occurrence. Starting at the corrected instant (not the stale one) keeps the
