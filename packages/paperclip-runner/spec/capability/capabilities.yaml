@@ -1259,9 +1259,9 @@
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:updating-a-routine:259",
+      "id": "skill:skills/paperclip/references/routines.md:updating-a-routine:258",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:259",
+      "sourceAnchor": "skills/paperclip/references/routines.md:258",
       "title": "Updating a Routine",
       "expectedSemantics": "Skill guidance headed “Updating a Routine”.",
       "primaryDisposition": "optional_agent_tool",
@@ -1270,13 +1270,13 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:259"
+        "skill:skills/paperclip/references/routines.md:258"
       ]
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:reading-routines-and-runs:270",
+      "id": "skill:skills/paperclip/references/routines.md:reading-routines-and-runs:269",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md:270",
+      "sourceAnchor": "skills/paperclip/references/routines.md:269",
       "title": "Reading Routines and Runs",
       "expectedSemantics": "Skill guidance headed “Reading Routines and Runs”.",
       "primaryDisposition": "optional_agent_tool",
@@ -1285,7 +1285,7 @@
         "control_plane_invariant"
       ],
       "evidenceIds": [
-        "skill:skills/paperclip/references/routines.md:270"
+        "skill:skills/paperclip/references/routines.md:269"
       ]
     },
     {

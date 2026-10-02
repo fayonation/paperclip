@@ -222,8 +222,8 @@ scheduled fire, pass the **pending schedule trigger's `triggerId`** (the trigger
 whose `nextRunAt` is next due).
 
 - With `triggerId`, the server recomputes that trigger's `next_run_at` from
-  `now` and **suppresses the stale scheduled fire** — the schedule does not fire
-  a second time for the run you just did manually.
+  `now`. A scheduled fire that is already due is skipped; a fire that is still
+  ahead is **not** moved and runs as scheduled.
 - Without `triggerId`, the scheduled fire is left in place. If you also changed
   the run payload, the **dispatch fingerprint changes**, so the scheduled fire is
   a different execution and still creates a **separate execution issue — even
@@ -233,14 +233,14 @@ whose `nextRunAt` is next due).
 
 `coalesce_if_active` does not coalesce against "a recent run". It merges the
 incoming run into an existing execution issue only when **both** are true
-(`findLiveExecutionIssue`, `server/src/services/routines.ts:1502`):
+(`findLiveExecutionIssue`, `server/src/services/routines.ts:1514`):
 
 1. the execution issue is still **open** (`OPEN_ISSUE_STATUSES`), and
 2. that issue still has a **live heartbeat run** (`LIVE_HEARTBEAT_RUN_STATUSES`).
 
-So: **finish/close the first execution before relying on the next fire to
-coalesce.** If the first execution issue is already closed, or its heartbeat run
-has ended, the next fire has nothing live to merge into and creates a new issue.
+So: **keep the first execution issue open with a live heartbeat run if you want
+the next fire to coalesce.** If it is already closed, or its heartbeat run has
+ended, the next fire has nothing live to merge into and creates a new issue.
 
 ### Consolidate transition-boundary duplicates
 
@@ -250,9 +250,8 @@ Treat it as a duplicate:
 
 - **Consolidate and close it.** Keep the original execution as the record of
   truth; close the duplicate, linking it in a comment.
-- **Never raise a second monthly plan card.** Engine rule: there is **exactly one
-  plan card per month**. A duplicate run must not create a second plan-of-record
-  card or re-ask the board.
+- **Never raise a second plan card for the same work.** A duplicate run must not
+  create a second plan-of-record card or re-ask the board.
 
 ---
 

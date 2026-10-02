@@ -124,8 +124,8 @@ The skill/reference inventory and eval cases are the only normative behavior sou
 | skill:skills/paperclip/references/routines.md:pass-the-pending-schedule-trigger-s-triggerid-on-a-manual-run:218 | optional_agent_tool | skills/paperclip/references/routines.md:218 |
 | skill:skills/paperclip/references/routines.md:coalesceifactive-needs-an-open-issue-with-a-live-heartbeat-run:232 | optional_agent_tool | skills/paperclip/references/routines.md:232 |
 | skill:skills/paperclip/references/routines.md:consolidate-transition-boundary-duplicates:245 | optional_agent_tool | skills/paperclip/references/routines.md:245 |
-| skill:skills/paperclip/references/routines.md:updating-a-routine:259 | optional_agent_tool | skills/paperclip/references/routines.md:259 |
-| skill:skills/paperclip/references/routines.md:reading-routines-and-runs:270 | optional_agent_tool | skills/paperclip/references/routines.md:270 |
+| skill:skills/paperclip/references/routines.md:updating-a-routine:258 | optional_agent_tool | skills/paperclip/references/routines.md:258 |
+| skill:skills/paperclip/references/routines.md:reading-routines-and-runs:269 | optional_agent_tool | skills/paperclip/references/routines.md:269 |
 | skill:skills/paperclip/references/workflows.md:paperclip-workflow-playbooks:1 | optional_agent_tool | skills/paperclip/references/workflows.md:1 |
 | skill:skills/paperclip/references/workflows.md:project-setup-ceo-manager:7 | optional_agent_tool | skills/paperclip/references/workflows.md:7 |
 | skill:skills/paperclip/references/workflows.md:openclaw-invite-ceo:22 | optional_agent_tool | skills/paperclip/references/workflows.md:22 |

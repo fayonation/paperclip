@@ -1388,18 +1388,18 @@
       "expectedMockState": "runtime_decision_record"
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:259",
+      "id": "skill:skills/paperclip/references/routines.md:258",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md#L259:updating-a-routine",
+      "sourceAnchor": "skills/paperclip/references/routines.md#L258:updating-a-routine",
       "heading": "Updating a Routine",
       "primaryDisposition": "optional_agent_tool",
       "semanticOperation": "scoped_discovery",
       "expectedMockState": "operation_result"
     },
     {
-      "id": "skill:skills/paperclip/references/routines.md:270",
+      "id": "skill:skills/paperclip/references/routines.md:269",
       "kind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/references/routines.md#L270:reading-routines-and-runs",
+      "sourceAnchor": "skills/paperclip/references/routines.md#L269:reading-routines-and-runs",
       "heading": "Reading Routines and Runs",
       "primaryDisposition": "optional_agent_tool",
       "semanticOperation": "scoped_discovery",
