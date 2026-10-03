@@ -2524,8 +2524,12 @@ export class ChatSdkEndpointRuntime {
     }
     if (input.provider === "slack") {
       // Slack threads are keyed by the root message timestamp, which the
-      // channel post returns as its message id.
-      const channelId = input.channelThreadId.replace(/^slack:/, "");
+      // channel post returns as its message id. A channel destination is
+      // already `slack:<channel>:`; strip the prefix and any trailing separator
+      // so the thread id is `slack:<channel>:<messageId>`, never `...::<id>`.
+      const channelId = input.channelThreadId
+        .replace(/^slack:/, "")
+        .replace(/:+$/, "");
       return { threadId: `slack:${channelId}:${input.messageId}` };
     }
     if (input.provider === "microsoft-teams") {
