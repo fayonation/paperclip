@@ -2533,10 +2533,31 @@ export class ChatSdkEndpointRuntime {
       return { threadId: `slack:${channelId}:${input.messageId}` };
     }
     if (input.provider === "microsoft-teams") {
-      const base = input.channelThreadId.replace(/^teams:/, "");
+      const teams = this.adapter as unknown as TeamsAdapterInternals;
+      if (typeof teams.decodeThreadId !== "function") {
+        throw new TeamsAdapterCompatibilityError(
+          "decodeThreadId is unavailable",
+        );
+      }
+      // `channelThreadId` is the encoded conversation destination
+      // (`teams:<base64url(conversationId)>`). Decode it to the plain
+      // conversation id before building the message-rooted id. Encoding the
+      // already-encoded segment again produces an id that decodes to the
+      // base64 text instead of the conversation id, so later replies cannot
+      // match the created thread.
+      const decoded = teams.decodeThreadId(input.channelThreadId);
+      const conversationId =
+        typeof decoded.conversationId === "string"
+          ? decoded.conversationId.trim()
+          : "";
+      if (!conversationId) {
+        throw new TeamsAdapterCompatibilityError(
+          "Teams destination is missing its conversation identity",
+        );
+      }
       return {
         threadId: `teams:${Buffer.from(
-          `${base};messageid=${input.messageId}`,
+          `${conversationId};messageid=${input.messageId}`,
         ).toString("base64url")}`,
       };
     }
