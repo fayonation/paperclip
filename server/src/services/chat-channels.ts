@@ -1741,7 +1741,11 @@ function agentThreadIdForResource(
   if (provider === "telegram") return `telegram:${resourceId}`;
   if (provider === "github") return `github:${resourceId.toLowerCase()}`;
   if (provider === "microsoft-teams") {
-    return canonicalTeamsThreadId(`teams:${resourceId}`) ?? null;
+    // A Teams resource stores the decoded Bot Framework conversation id, but
+    // the SDK thread id base64url-encodes that id as `teams:<encoded-id>`.
+    // Encode here; `canonicalTeamsThreadId` would decode the plain id and
+    // reject it (or, worse, misread a colon-bearing id).
+    return `teams:${Buffer.from(resourceId).toString("base64url")}`;
   }
   return null;
 }

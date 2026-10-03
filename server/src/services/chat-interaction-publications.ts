@@ -489,15 +489,25 @@ export async function enqueueIssueInteractionChatPublications(
                 },
               ]
             : [];
-    // Providers without native confirmation actions render the binary gate as
-    // numbered text choices; the linked user's bare `1`/`2` thread reply is
-    // mapped back to accept/reject by the inbound handler.
+    // Discord has no native confirmation actions, so the binary gate is
+    // rendered as numbered text choices and the linked user's bare `1`/`2`
+    // thread reply is mapped back to accept/reject by the inbound handler.
+    // Other providers without native actions (Slack, Teams, GitHub, AgentMail)
+    // have no numbered-reply interpreter, so a numbered instruction would be
+    // stored as an ordinary comment and expire the gate as
+    // `superseded_by_comment`. They keep the link-only fallback instead.
+    const numberedConfirmation =
+      interaction.kind === "request_confirmation" &&
+      confirmation === null &&
+      endpoint.provider === "discord";
     const linkOnlyConfirmation =
-      interaction.kind === "request_confirmation" && confirmation === null;
+      interaction.kind === "request_confirmation" &&
+      confirmation === null &&
+      !numberedConfirmation;
     const text =
       interaction.kind === "ask_user_questions"
         ? textForQuestionInteraction(interaction, taskUrl)
-        : linkOnlyConfirmation
+        : numberedConfirmation
           ? numberedConfirmationText(interaction, taskUrl)
           : genericInteractionText(taskUrl);
     const payload = projectSafeChatPublication({
@@ -527,7 +537,7 @@ export async function enqueueIssueInteractionChatPublications(
             interaction.kind === "ask_user_questions"
               ? (question?.helpText ?? undefined)
               : interaction.kind === "request_confirmation"
-                ? linkOnlyConfirmation
+                ? numberedConfirmation
                   ? numberedConfirmationBody(interaction)
                   : (interaction.payload.detailsMarkdown ?? undefined)
                 : "Open the task in Paperclip to review and respond.",
