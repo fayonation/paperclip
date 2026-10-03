@@ -222,8 +222,8 @@ scheduled fire, pass the **pending schedule trigger's `triggerId`** (the trigger
 whose `nextRunAt` is next due).
 
 - With `triggerId`, the server recomputes that trigger's `next_run_at` from
-  `now`. A scheduled fire that is already due is skipped; a fire that is still
-  ahead is **not** moved and runs as scheduled.
+  `now`. A fire that is still ahead is **not** moved and runs. A stored fire
+  already due is skipped unless the scheduler already claimed that tick.
 - Without `triggerId`, the scheduled fire is left in place. If you also changed
   the run payload, the **dispatch fingerprint changes**, so the scheduled fire is
   a different execution and still creates a **separate execution issue — even

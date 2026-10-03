@@ -192,8 +192,8 @@ Fires a run immediately, bypassing the schedule. Concurrency policy still applie
 **Operator rule: pass the pending schedule trigger's `triggerId`.** When a routine
 also has a `schedule` trigger and you run it manually, pass the pending schedule
 trigger's `triggerId`. The server then recomputes that trigger's `next_run_at`
-from `now`. A scheduled fire that is already due is skipped; a fire that is still
-ahead is not moved and runs as scheduled. Without `triggerId`, the schedule is
+from `now`. A fire that is still ahead runs as scheduled; a stored fire already
+due is skipped unless its tick was already claimed. Without `triggerId`, the schedule is
 untouched: if the manual run's payload changed (which changes the dispatch
 fingerprint), the scheduled fire is treated as a distinct execution and
 **still creates a separate execution issue, even under `coalesce_if_active`**.
