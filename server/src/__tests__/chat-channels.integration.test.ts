@@ -73232,6 +73232,35 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       await f.service.shutdown();
     });
 
+    it("rejects an explicit private task that the sending agent cannot read", async () => {
+      const f = await agentSendFixture();
+      const privateIssue = await issueService(db).create(f.fixture.companyId, {
+        title: "Private report task",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: f.fixture.replacementAgentId,
+        visibility: "private",
+      });
+      await expect(
+        f.service.createAgentThread(
+          f.endpoint.id,
+          {
+            resourceId: f.channel.id,
+            issueId: privateIssue.id,
+            body: "Private thread root message",
+            idempotencyKey: "agent-private-thread-0001",
+          },
+          {
+            agentId: f.fixture.assignedAgentId,
+            runId: f.runId,
+            companyId: f.fixture.companyId,
+          },
+        ),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(f.runtime.endpoints.get(f.endpoint.id)?.posts).toHaveLength(0);
+      await f.service.shutdown();
+    });
+
     it("creates a thread and binds later sends to it", async () => {
       const f = await agentSendFixture();
       const created = await f.service.createAgentThread(

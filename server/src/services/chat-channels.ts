@@ -31898,11 +31898,26 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         id: issues.id,
         assigneeAgentId: issues.assigneeAgentId,
         companyId: issues.companyId,
+        visibility: issues.visibility,
+        privacyRootIssueId: issues.privacyRootIssueId,
+        responsibleUserId: issues.responsibleUserId,
+        createdByUserId: issues.createdByUserId,
+        assigneeUserId: issues.assigneeUserId,
+        projectId: issues.projectId,
       })
       .from(issues)
       .where(and(eq(issues.id, issueId), eq(issues.companyId, companyId)))
       .limit(1);
     if (!issue) throw notFound("Task not found");
+    if (
+      !(await canActorReadIssuePrivacy(
+        tx,
+        { type: "agent", agentId: actor.agentId },
+        issue,
+      ))
+    ) {
+      throw notFound("Task not found");
+    }
     if (issue.assigneeAgentId === actor.agentId) return issue.id;
     if (
       issue.assigneeAgentId &&
